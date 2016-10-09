@@ -6,7 +6,7 @@ output: pdf_document
 ---
 $min\frac{1}{2N}\sum _{i=1}^{N} {(y_i-\beta_0-x_i ^ \mathrm{ T } ) ^2+\lambda[(1-\alpha)*\left \|  \beta\right \|_2^2/2+\alpha*\left \|  \beta\right \|_1]}$
 
-```{r message=FALSE}
+```{r}
 library(ROCR)
 library(Deducer)
 library(grid)
@@ -18,8 +18,7 @@ library(easyGgplot2)
 library(glmnet)
 library(maps)
 library(choroplethr)
-load("~/Desktop/Freddie Mac data/USMortgages2008_2009.rdata")
-install_github("easyGgplot2", "kassambara")
+load("~/Desktop/Freddie_Mac_data/USMortgages2008_2009.rdata")
 ```
 
 ```{r}
@@ -332,7 +331,7 @@ below makes a alpha and lamda grid with alpha density 0.1 and lamda density 0.00
 
 
 
-```{r}
+```{r warnings=FALSE}
 alphaslist<-seq(0,1,by=0.1)
 
 temp_function = function(i){
@@ -408,7 +407,7 @@ theTable <- within(theTable,
                                                         decreasing=TRUE))))
 
 m <- ggplot(theTable, aes(x=state))
-m + stat_count(width = 0.5)
+m + stat_count(width = 0.5) + theme(axis.text.x = element_text(angle = 90, hjust = 1))
 
 ```
 
@@ -466,7 +465,7 @@ head(out$CA)
 
 try to get a lsit of CV.FIT in different state
 
-```{r}
+```{r warning=FALSE}
 my.fit.function = function(state_data){
   d = state_data[,-ncol(state_data)]
   #x = d[,-8]
@@ -480,7 +479,7 @@ my.fit.function = function(state_data){
 state.cv.fit = lapply(out,my.fit.function)
 ```
 
-```{r}
+```{r warning=FALSE}
 
 state.cv.fit[[1]]
 
@@ -497,7 +496,7 @@ auc_record(fit=state.cv.fit[[1]], data = out[[2]])
 
 ```
 
-```{r}
+```{r warning=FALSE}
 auc_matrix=matrix(0,nrow=54,ncol=54)
 for (i in 1:54){
   for (j in 1:54){
@@ -545,7 +544,7 @@ stateFromLower <-function(x) {
 }
 ```
 
-```{r}
+```{r, warning=FALSE}
 temp = as.data.frame(cbind(unlist(auc_matrix["CA",]),rownames(auc_matrix)))
 colnames(temp)=c("value","region")
 temp$region = stateFromLower(temp$region)
@@ -557,7 +556,7 @@ temp = temp[complete.cases(temp),]
 state_choropleth(temp, title = "AUC on Different States based on Model from California",num_colors = 9,legend = "AUC")
 ```
 
-```{r}
+```{r, warning=FALSE}
 temp = as.data.frame(cbind(unlist(auc_matrix["IL",]),rownames(auc_matrix)))
 colnames(temp)=c("value","region")
 temp$region = stateFromLower(temp$region)
@@ -568,7 +567,7 @@ temp = temp[complete.cases(temp),]
 state_choropleth(temp, title = "AUC on Different States based on Model from Illinois",num_colors = 9,legend = "AUC")
 ```
 
-```{r}
+```{r, warning=FALSE}
 temp = as.data.frame(cbind(unlist(auc_matrix["TX",]),rownames(auc_matrix)))
 colnames(temp)=c("value","region")
 temp$region = stateFromLower(temp$region)
