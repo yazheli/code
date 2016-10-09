@@ -1,0 +1,84 @@
+---
+title: "Freddie3"
+author: "Yazhe"
+date: "05/10/2016"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+load("~/Desktop/Freddie Mac data/prepared_data.RData")
+
+library(caret)
+library(rpart.plot)
+library(rpart)
+library(gbm)
+library(ROCR)
+```
+
+```{r}
+auc_calucator = function(fitted.results, test_data_y) {
+  pr <- prediction(fitted.results, test_data_y)
+  prf <- performance(pr, measure = "tpr", x.measure = "fpr")
+  auc <- performance(pr, measure = "auc")
+  auc <- auc@y.values[[1]]
+  return(c(auc,prf))
+}
+```
+
+```{r}
+boost_model =gbm(def_flag~., data=train, distribution=
+                    "bernoulli",n.trees = 200 , interaction.depth =2)
+summary (boost_model)
+y.predict=predict (boost_model ,newdata = test, n.trees = 200, type='response')
+head(y.predict)
+```
+
+```{r}
+result = y.predict
+result = ifelse(result>0.2, "TRUE", "FALSE")
+table(predict = result, test = test$def_flag)
+```
+
+```{r fig.width=5, fig.height=5}
+temp = auc_calucator(y.predict,test$def_flag)
+auc = temp[[1]];auc
+plot(temp[[2]]);lines(x = c(0,1), y = c(0,1))
+```
+
+```{r}
+train$def_flag = as.factor(as.logical(train$def_flag))
+test$def_flag = as.factor(as.logical(test$def_flag))
+
+gbmGrid <- expand.grid(interaction.depth=(1:3)*2, n.trees=(1:10)*20, shrinkage=.1)
+gbmGrid$n.minobsinnode = rep(10,nrow(gbmGrid))
+
+head(gbmGrid)
+bootControl <- trainControl(method = "cv", number = 3)
+
+gmbFit<- train(def_flag ~ ., 
+               method = "gbm", 
+               data = train, 
+               verbose = F, 
+               trControl = bootControl, 
+               bag.fraction=0.5,
+               tuneGrid=gbmGrid)
+```
+
+```{r}
+plot(gmbFit)
+plot(gmbFit,plotType = "level")
+resampleHist((gmbFit))
+```
+
+```{r}
+y.predict=predict (gmbFit ,newdata = test, type='prob')
+head(y.predict)
+temp = auc_calucator(y.predict[,2],test$def_flag)
+auc = temp[[1]];auc
+plot(temp[[2]]);lines(x = c(0,1), y = c(0,1))
+```
+

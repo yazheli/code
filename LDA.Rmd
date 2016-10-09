@@ -1,0 +1,163 @@
+---
+title: freddie mac
+output: html_document
+---
+##data explore
+```{r}
+load("~/Desktop/Freddie Mac data/USMortgages2008_2009.rdata")
+names(D1)
+```
+
+use 10% data as traning data here
+
+```{r}
+sample_index = sample(1:nrow(D1), floor(nrow(D1)/10), replace=FALSE)
+D2 <- D1[sample_index,]
+D3 <- D1[-sample_index,]
+
+head(D2)
+head(D1)
+
+summary(D1$def_flag)
+summary(D2$def_flag)
+```
+
+extract the numeric variables
+
+```{r}
+D2_num = subset(D2, select=c("score","CLTV","DTI",
+                             "UPB","LTV","OIR","def_flag"))
+
+D3_num = subset(D3, select=c("score","CLTV","DTI",
+                             "UPB","LTV","OIR","def_flag"))
+library(car)
+scatterplot.matrix(~score+CLTV+DTI+UPB+LTV+OIR, data=D2_num[1:1000,],
+                   main="Scatterplot Matrix",pch=".")
+
+D2_def = D2[D2$def_flag == TRUE,]
+scatterplot.matrix(~score+CLTV+DTI+UPB+LTV+OIR, data=D2_def,
+                   main="Scatterplot Matrix_default data",pch=".")
+```
+
+LTV CLTV show collinearity
+different densoty plot between two classes can be seen on score DTI OIR
+
+##logistic regression
+#remove NA
+Simply remove the rows with "NA" in it. Maybe it is better to use some strategy to  handle with missing data problem.
+
+```{r}
+temp = D2_num[complete.cases(D2_num),]
+summary(temp)
+```
+
+#build a test set
+```{r}
+test = D3_num[complete.cases(D3_num),]
+```
+
+data prepared
+
+#using function glm
+fit a logistic model with two variables
+
+```{r}
+library(Deducer)
+
+glm.fit = glm(def_flag ~ DTI + OIR, data=temp, family=binomial)
+summary(glm.fit)
+coef(glm.fit)
+glm.probs=predict(glm.fit,type="response")
+sum(glm.probs>0.5);sum(glm.probs>0.1)
+
+library(ROCR)
+pr <- prediction(glm.probs, temp$def_flag)
+prf <- performance(pr, measure = "tpr", x.measure = "fpr")
+auc <- performance(pr, measure = "auc")
+auc <- auc@y.values[[1]];auc
+plot(prf);lines(x = c(0,1), y = c(0,1))
+```
+
+#use all numeric variable
+```{r}
+glm.fit2 = glm(def_flag ~ score+CLTV+DTI+UPB+LTV+OIR, data=temp, family=binomial)
+summary(glm.fit2)
+coef(glm.fit2)
+glm.probs=predict(glm.fit2,type="response")
+sum(glm.probs>0.5);sum(glm.probs>0.1)
+
+pr <- prediction(glm.probs, temp$def_flag)
+prf <- performance(pr, measure = "tpr", x.measure = "fpr")
+auc <- performance(pr, measure = "auc")
+auc <- auc@y.values[[1]];auc
+plot(prf);lines(x = c(0,1), y = c(0,1))
+```
+
+#on test dataset
+```{r}
+fitted.results <- predict(glm.fit2,newdata=test,
+                          type='response')
+fitted.outputs <- ifelse(fitted.results > 0.5, 1, 0)
+misClasificError <- mean(fitted.outputs != test$def_flag,na.omit="TRUE")
+misClasificError
+
+threshold = function(x){
+  fitted.outputs <- ifelse(fitted.results > x, 1, 0)
+  misClasificError <- mean(fitted.outputs != test$def_flag,na.omit="TRUE")
+  return (misClasificError)
+ }
+
+rate = lapply(seq(0.1,0.9,0.1),threshold)
+unlist(rate)
+
+fitted.outputs <- ifelse(fitted.results > 0.5, 1, 0)
+table(fitted.outputs,test$def_flag)
+
+fitted.outputs <- ifelse(fitted.results > 0.01, 1, 0)
+table(fitted.outputs,test$def_flag)
+```
+
+question about how to choose threshold?
+
+```{r}
+as.numeric(summary(D1$def_flag)[3])/nrow(D1)
+
+pr <- prediction(fitted.results, test$def_flag)
+prf <- performance(pr, measure = "tpr", x.measure = "fpr")
+plot(prf);lines(x = c(0,1), y = c(0,1))
+
+auc <- performance(pr, measure = "auc")
+auc <- auc@y.values[[1]]
+auc
+
+```
+
+##try LDA
+```{r}
+library (MASS)
+lda.fit=lda(def_flag ~ score+CLTV+DTI+UPB+LTV+OIR, data=temp)
+lda.fit
+lda.pred = predict (lda.fit , newdata=test, type='response')
+names(lda.pred)
+lda.class =lda.pred$class
+table(lda.class,test$def_flag )
+```
+
+##try to plus other variables into logistic model
+#maybe logistic model plus lasso will be useful, glmnet and glmpath
+```{r}
+load("~/Desktop/Freddie Mac data/USMortgages2008_2009.rdata")
+names(D1)
+head(D1)
+#first.time.homebuyer,insurance,number.units,occupance.status,channle,PPM
+#product.type,property.state,property.type,loan.purpose,orig.loan.term
+#number.borrowers,seller,servicer,loan_age 
+factor_data = subset(D1, select=c("first.time.homebuyer","insurance","number.units",
+                             "occupancy.status","channel","PPM","product.type",
+                             "property.type","loan.purpose","number.borrowers",
+                             "seller","servicer","def_flag"))
+
+element = sapply(factor_data,unique);element
+count_factor = sapply(factor_data,function(x) {table(x,exclude = NULL)});count_factor
+```
+

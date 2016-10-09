@@ -1,0 +1,35 @@
+---
+title: "time information"
+author: "Yazhe"
+date: "06/10/2016"
+output: pdf_document
+---
+
+```{r}
+load("~/Desktop/Freddie Mac data/USMortgages2008_2009.rdata")
+names(D1)
+
+time_inf =subset(D1, select = c(first.pay.date, maturity.date, orig.loan.term, loan_age))
+
+first.pay.year = substr(time_inf$first.pay.date, start=1, stop=4)
+maturity.dat.year = substr(time_inf$maturity.dat, start=1, stop=4)
+
+year = as.data.frame(cbind(first.pay.year,maturity.dat.year))
+names(year)
+
+library(plyr)
+count(year)
+
+count(time_inf$orig.loan.term)
+
+count(time_inf$loan_age)
+```
+
+```{r}
+temp = time_inf[is.na(time_inf$loan_age),]
+temp.first.pay.year = substr(temp$first.pay.date, start=1, stop=4)
+temp.maturity.dat.year = substr(temp$maturity.dat, start=1, stop=4)
+
+temp.year = as.data.frame(cbind(temp.first.pay.year,temp.maturity.dat.year))
+count(temp.year)
+```

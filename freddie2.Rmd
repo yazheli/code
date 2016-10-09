@@ -1,0 +1,560 @@
+---
+title: "Freddie Mac"
+author: "Yazhe"
+date: "9/29/2016"
+output: pdf_document
+---
+
+```{r message=FALSE}
+library(ROCR)
+library(Deducer)
+library(grid)
+library(devtools)
+library(car)
+library(ggplot2)
+library(plyr)
+library(easyGgplot2)
+library(glmnet)
+library(maps)
+library(choroplethr)
+load("~/Desktop/Freddie Mac data/USMortgages2008_2009.rdata")
+install_github("easyGgplot2", "kassambara")
+```
+
+```{r}
+names(D1)
+```
+
+#simply remove NA first
+Firstly, I delete column "seqno, first.pay.data, MSA, maturity.data, product.type, property.state, postal.code, loan_age".
+
+
+```{r}
+newD = D1[,-c(1,3,6,5,17,18,20,26)]
+na_count <- sapply(newD, function(x) sum(is.na(x))); na_count
+D1_removeNA = newD[complete.cases(newD),]
+names(D1_removeNA)
+```
+we can see most deleted rows are caused by missing value from DTI,
+26985 DTI are missed, more than 1% of the number of whole rows
+
+#categorical variables
+first.time.homebuyer, insurance,number.units, occupance.status,channle,
+product.type, property.state, property.type, 
+loan.purpose, orig.loan.term, seller,servicer, loan_age,PPM,
+
+I also choose to translate "insurance" to categorical variables
+```{r}
+D1_removeNA$insurance[which(D1_removeNA$insurance == 0)] = '0'
+D1_removeNA$insurance[which(D1_removeNA$insurance != 0)] = '1'
+```
+
+```{r}
+factor_data = subset(D1_removeNA, select=c("first.time.homebuyer","insurance",
+                                           "number.units","occupancy.status",
+                                           "channel","PPM","property.type",
+                                           "loan.purpose", "seller",
+                                           "servicer","def_flag"))
+
+count_factor = sapply(factor_data, 
+                      function(x) {table(x,exclude = NULL)});count_factor
+
+```
+table above give the number of each classes in each variables.
+
+#dummy code categorical variables
+```{r}
+relevel_order = function(x){
+  tb <- table(x)
+  relevel_x <- factor(x,levels = names(tb[order(tb, decreasing = TRUE)]))
+  return (relevel_x)
+}
+```
+
+function for relevel the level's order of each variable by their frequency 
+from high to low 
+
+```{r}
+temp = factor_data[,1:8]
+name = names(temp)
+
+for (i in 1:8){
+  assign(name[i],factor(temp[,i]))
+}
+
+first.time.homebuyer = relevel_order(first.time.homebuyer)
+dummies1 = model.matrix(~first.time.homebuyer)
+
+insurance = relevel_order(insurance)
+dummies2 = model.matrix(~insurance)
+
+number.units = relevel_order(number.units)
+dummies3 = model.matrix(~number.units)
+
+occupancy.status = relevel_order(occupancy.status)
+dummies4 = model.matrix(~occupancy.status)
+
+channel = relevel_order(channel)
+dummies5 = model.matrix(~channel)
+
+PPM = relevel_order(PPM)
+dummies6 = model.matrix(~PPM)
+
+property.type = relevel_order(property.type)
+dummies7 = model.matrix(~property.type)
+
+loan.purpose = relevel_order(loan.purpose)
+dummies8 = model.matrix(~loan.purpose)
+
+dummy_factor_data = cbind(dummies1[,-1],dummies2[,-1],dummies3[,-1],dummies4[,-1],
+                          dummies5[,-1],dummies6[,-1],dummies7[,-1],dummies8[,-1])
+head(dummy_factor_data)
+```
+
+#numerical variable
+score, CLTV, DTI, UPB, LTV, OIR, PPM, orig.loan.term, number.borrowers
+```{r}
+numerical = subset(D1_removeNA, select=c("score", "CLTV", "DTI", "UPB", "LTV",
+                                        "OIR", "orig.loan.term", 
+                                        "number.borrowers","def_flag"))
+```
+
+I translate seller and servicer to numerical variable by using weight of evidence
+```{r}
+woe.tab <- function(x,y) {
+  n1 <- sum(y) 
+  n0 <- sum(1-y) 
+  nx0n1 <- tapply(1-y,x,sum)*n1 
+  nx1n0 <- tapply(y,x,sum) *n0
+  nx0n1[which(nx0n1==0)]<-n1 
+  nx1n0[which(nx1n0==0)]<-n0
+  log(nx0n1)-log(nx1n0) 
+}
+
+woe.assign <- function(woetab, x) {
+  w<-rep(0,length(x))
+  ni<-names(woetab)
+  for (i in 1:length(ni)) {
+    w[which(x==ni[i])]<-woetab[i]
+  }
+  w
+}
+#function woe.tab and woe.assign are writen by Dr Tony
+
+woe_seller = woe.assign(woe.tab(D1_removeNA$seller,D1_removeNA$def_flag),
+                        D1_removeNA$seller)
+
+woe_servicer = woe.assign(woe.tab(D1_removeNA$servicer,D1_removeNA$def_flag),
+                        D1_removeNA$servicer)
+numerical$seller = woe_seller
+numerical$servicer = woe_servicer
+head(numerical)
+```
+
+#some plots for presenting the numerical data
+```{r fig.width=7, fig.height=7}
+scatterplot.matrix(~score+CLTV+DTI+UPB+LTV+OIR, data=numerical[1:2000,],
+                   main="Scatterplot Matrix",pch=".")
+```
+CLTV and LTV are highly correleated
+```{r fig.width=7, fig.height=7}
+library(GGally)
+ggpairs(numerical[1:2000,1:6],lower = list(continuous = wrap("points", alpha = 0.3,    size=0.1)),title = "Scatterplot Matrix",axisLabels = "none")
+```
+
+Below is box plots of score, CLTV, DTI, UPB and OIR by whether default 
+or not
+```{r}
+p = list()
+p[[1]] = ggplot(aes(y = score, x = def_flag), data = numerical) + geom_boxplot()
+p[[2]] = ggplot(aes(y = CLTV, x = def_flag), data = numerical) + geom_boxplot()
+p[[3]] = ggplot(aes(y = DTI, x = def_flag), data = numerical) + geom_boxplot()
+p[[4]] = ggplot(aes(y = UPB, x = def_flag), data = numerical) + geom_boxplot()
+p[[5]] = ggplot(aes(y = OIR, x = def_flag), data = numerical) + geom_boxplot()
+
+ggplot2.multiplot(p[[1]],p[[2]],p[[3]],p[[4]],p[[5]], cols=5)
+```
+
+
+```{r warning=FALSE,fig.width=7, fig.height=7}
+library(dplyr)
+pp = list()
+
+a = numerical[which(numerical$def_flag == 1),] %>% group_by(seller,servicer) %>%
+summarize(Count = n())
+
+b = numerical[which(numerical$def_flag == 0),] %>% group_by(seller,servicer) %>%
+  summarize(Count = n())
+
+a = as.data.frame(a)
+names(a)=c('seller','servicer','count')
+a$count = (a$count)/sum(a$count)
+pp[[1]] <- ggplot(a, aes(seller, servicer)) + geom_point(aes(size = count)) + ggtitle("seller/servicer pair plot with percentage in default YES group")+ theme(plot.title = element_text(size=8))
+
+
+b = as.data.frame(b)
+names(b)=c('seller','servicer','count')
+b$count = (b$count)/sum(b$count)
+pp[[2]] <- ggplot(b, aes(seller, servicer)) + geom_point(aes(size = count))+ggtitle("seller/servicer pair plot with percentage in default NO group")+ theme(plot.title = element_text(size=8))
+
+ggplot2.multiplot(pp[[1]],pp[[2]], cols=2)
+```
+If we want to check whether seller/servicer pair have some relationships whith possibility of default, we can check the above plot. The dot in the plot represent the pair of seller/servicer, and the size of the certain dot represent $\frac{number\ of\  the\ certain\ pairs} {number\ of\ the\ whole\ pairs}$
+
+There is no clear different pattern between two group.
+
+#split the data into train/test datasets
+#also delete column CLTV  
+```{r}
+data = cbind(numerical,dummy_factor_data)
+data = data[,-2]
+head(data)
+
+sample_index = sample(1:nrow(data), floor(nrow(data)/10), replace=FALSE)
+train <- data[sample_index,]
+test <- data[-sample_index,]
+```
+
+#glm function
+##fit model by using "glm"
+##defaul alpha = 1 which means losso
+```{r}
+glm.fit = glm(def_flag ~ . , data=train, family=binomial, alpha = 1)
+summary(glm.fit)
+```
+why PPMY is NA?
+
+```{r}
+table(D1_removeNA$PPM,exclude = NULL)
+```
+
+```{r}
+coef(glm.fit)
+glm.probs=predict(glm.fit,type="response")
+```
+
+```{r fig.width= 7, fig.height = 7}
+pr <- prediction(glm.probs, train$def_flag)
+prf <- performance(pr, measure = "tpr", x.measure = "fpr")
+auc <- performance(pr, measure = "auc")
+auc <- auc@y.values[[1]];auc
+plot(prf);lines(x = c(0,1), y = c(0,1))
+```
+
+On train data, the AUC is `r auc`
+
+
+##the model performence on test data
+```{r}
+fitted.results <- predict(glm.fit,newdata=test,
+                          type='response')
+fitted.outputs <- ifelse(fitted.results > 0.5, 1, 0)
+misClasificError <- mean(fitted.outputs != test$def_flag,na.omit="TRUE")
+misClasificError
+```
+If I set the threshold to 0.5, the mis-classify rate will be `r misClasificError`
+so let's try different threshold from 0.1 to 0.9
+
+```{r}
+threshold = function(x){
+  fitted.outputs <- ifelse(fitted.results > x, 1, 0)
+  misClasificError <- mean(fitted.outputs != test$def_flag,na.omit="TRUE")
+  return (misClasificError)
+}
+
+rate = lapply(seq(0.1,0.9,0.1),threshold)
+unlist(rate)
+```
+
+```{r}
+fitted.outputs <- ifelse(fitted.results > 0.5, 1, 0)
+table(fitted.outputs,test$def_flag)
+
+fitted.outputs <- ifelse(fitted.results > 0.1, 1, 0)
+table(fitted.outputs,test$def_flag)
+```
+above is typeI and typrII error table with threshold 0.5 and 0.1 respectively
+
+we value more on typeII error, so lets place more weight on typeII error,
+let's say typeII:typeI = 3:1 here
+```{r}
+weighterror = function(threshold){
+  fitted.outputs = ifelse(fitted.results > threshold, 1, 0)
+  errortable = table(fitted.outputs,test$def_flag)
+  weight_error = (3*errortable[1,2]+errortable[2,1])/sum(errortable)
+  return(weight_error)
+}
+weighter = lapply(seq(0.1,0.9,0.01),weighterror)
+unlist(weighter)
+min(unlist(weighter))
+which.min(unlist(weighter))
+```
+
+we tried the threshold from 0.1 to 0.9 by 0.01 with weghtted typeI 
+and typeII error, here the best threhold is `r 0.09+which.min(unlist(weighter))*0.01`, and the weighted
+error rate is `r min(unlist(weighter))`
+
+```{r}
+pr <- prediction(fitted.results, test$def_flag)
+prf <- performance(pr, measure = "tpr", x.measure = "fpr")
+plot(prf);lines(x = c(0,1), y = c(0,1))
+
+auc <- performance(pr, measure = "auc")
+auc <- auc@y.values[[1]]
+auc
+```
+AUC value is `r auc`
+
+
+##above penalty is lasso (defult alpha =1)
+#let's tune alpha and lamda by 10 fold Cross Validation
+#using glmnet with elasticnet penalty
+```{r}
+names(train)
+x = train[,-8]
+x = as.matrix(x)
+y = train[,8]
+```
+
+here we choose AUC as measure methods in cross validation
+
+#above penalty is lasso (defult alpha =1)
+let's also tune alpha here
+
+below makes a alpha and lamda grid with alpha density 0.01 and lamda density 0.0001,tune on a 10 fold cross validation, measure is AUC
+
+$min\frac{1}{2N}\sum _{i=1}^{N} {(y_i-\beta_0-x_i ^ \mathrm{ T } ) ^2+\lambda[(1-\alpha)*\left \|  \beta\right \|_2^2/2+\alpha*\left \|  \beta\right \|_1]}$
+
+```{r}
+alphaslist<-seq(0,1,by=0.1)
+
+temp_function = function(i){
+    cvfit = cv.glmnet(x, y, family='binomial',type.measure = "auc",alpha = i)
+    fitted.results = predict(cvfit, newx = as.matrix(test[,-8]), s = "lambda.min", 
+                         type = "response")
+    pr <- prediction(fitted.results, test$def_flag)
+    auc <- performance(pr, measure = "auc")
+    auc <- auc@y.values[[1]]
+    return(c(auc,i))
+}
+
+temp = lapply(alphaslist,temp_function)
+```
+
+```{r}
+max(unlist(temp)[seq(1, length(unlist(temp)), 2)])
+max_index = which.max(unlist(temp)[seq(1, length(unlist(temp)), 2)])
+unlist(temp)[seq(2, length(unlist(temp)), 2)[max_index]]
+```
+so choose $\alpha=0.1$
+
+```{r}
+cvfit = cv.glmnet(x, y, family='binomial',type.measure = "auc",alpha = 0.1)
+cvfit$lambda.min
+coef(cvfit, s = "lambda.min")
+pre = predict(cvfit, newx = as.matrix(test[,-8]), s = "lambda.min", type = "class")
+```
+
+##the performance on test data
+```{r fig.width= 7, fig.height = 7}
+fitted.results = predict(cvfit, newx = as.matrix(test[,-8]), s = "lambda.min", 
+                         type = "response")
+pr <- prediction(fitted.results, test$def_flag)
+prf <- performance(pr, measure = "tpr", x.measure = "fpr")
+auc <- performance(pr, measure = "auc")
+auc <- auc@y.values[[1]];auc
+plot(prf);lines(x = c(0,1), y = c(0,1))
+```
+auc equal to `r auc`, which is a little bit better than previous model.
+
+let's also try the weighted error rate
+```{r}
+weighter = lapply(seq(0.1,0.9,0.01),weighterror)
+min(unlist(weighter))
+which.min(unlist(weighter))
+```
+the lowest weighted error rate is `r min(unlist(weighter))`, when choose 
+`r 0.09+which.min(unlist(weighter))*0.01` as threshold
+
+```{r}
+coeftable = cbind(coef(cvfit, s = "lambda.min"),coef(glm.fit));coeftable
+```
+above shows the cofficient, left column is logistic model with
+elasticnet penalty, right column is logistic midel.
+
+#how about focus on a certain state?
+```{r}
+D_state = D1[,-c(1,3,6,5,17,20,26)]
+D_state = D_state[complete.cases(D_state),]
+state = D_state$property.state
+theTable = as.data.frame(state)
+
+theTable <- within(theTable, 
+                   state <- factor(state, 
+                                      levels=names(sort(table(state), 
+                                                        decreasing=TRUE))))
+options( scipen = 1 )
+m <- ggplot(theTable, aes(x=state))
+m + stat_count(width = 0.5)
+
+```
+
+In this data set, california occupy more than 10% data. if we just use the data
+from california to fit a model, will this be a good model for Taxes and 
+the whole U.S.? (if california data is biased data set, I guess maybe 
+the model will not perform very well)
+
+##build the model on CA
+
+```{r}
+ca = data[(state=="CA"),]
+tx = data[(state=="TX"),]
+except_ca = data[(state!="CA"),]
+```
+
+```{r}
+x = ca[,-8]
+x = as.matrix(x)
+y = ca[,8]
+cvfit = cv.glmnet(x, y, family='binomial',type.measure = "auc")
+coef(cvfit, s = "lambda.min")
+```
+we can see more coefficient are shrinkage to 0.
+
+calculate the auc on CA, TX and non-CA data sets 
+```{r}
+auc_calucator = function(model, test_data_x, test_data_y) {
+  fitted.results = predict(model, newx = test_data_x, s = "lambda.min", 
+                           type = "response")
+  pr <- prediction(fitted.results, test_data_y)
+  prf <- performance(pr, measure = "tpr", x.measure = "fpr")
+  auc <- performance(pr, measure = "auc")
+  auc <- auc@y.values[[1]]
+  return(auc)
+}
+
+auc_ca = auc_calucator(cvfit, x, y);auc_ca
+auc_tx = auc_calucator(cvfit, as.matrix(tx[,-8]), tx[,8]);auc_tx
+auc_nonca = auc_calucator(cvfit, as.matrix(except_ca[,-8]), except_ca[,8]);auc_nonca
+```
+The auc value on California data itself is `r auc_ca`,
+on Taxes data is `r auc_tx`,
+on all non-California data is `r auc_nonca`.
+We could guess if we fit the model based on every state itself,
+the 54 models performance on their own state maybe better than
+we fit a model on the whole dataset.
+
+#split the data set by state
+```{r}
+data = cbind(data,state)
+out <- split( data , f = data$state )
+head(out$CA)
+```
+
+try to get a lsit of CV.FIT in different state
+```{r}
+a = out$VA
+names(a)
+a.factor_data = a[,-c(1,2,3,4,5,7,9,10)]
+names(a.factor_data)
+count_factor = sapply(a.factor_data, 
+                      function(x) {table(x,exclude = NULL)});count_factor
+```
+
+```{r}
+my.fit.function = function(state_data){
+  d = state_data[,-ncol(state_data)]
+  #x = d[,-8]
+  #x = as.matrix(x)
+  #y = d[,8]
+  #glm.fit = cv.glmnet(x, y, family='binomial',type.measure = "auc",nfolds = 3)
+  glm.fit = glm(def_flag ~ . , data = d, family=binomial)
+  return(glm.fit) 
+}
+
+state.cv.fit = lapply(out,my.fit.function)
+```
+
+```{r}
+
+state.cv.fit[[1]]
+
+auc_record = function(fit,data){
+  fitted.results <- predict(fit,newdata=data[,-ncol(data)],
+                          type='response')
+  pr <- prediction(fitted.results, data$def_flag)
+  auc <- performance(pr, measure = "auc")
+  auc <- auc@y.values[[1]]
+  return(auc)
+}
+
+auc_record(fit=state.cv.fit[[1]], data = out[[2]])
+
+```
+
+```{r}
+auc_matrix=matrix(0,nrow=54,ncol=54)
+for (i in 1:54){
+  for (j in 1:54){
+    auc_matrix[i,j] = auc_record(fit=state.cv.fit[[i]],out[[j]])
+  }
+}
+row.names(auc_matrix)=names(out)
+colnames(auc_matrix)=names(out)
+```
+#let's plot some map
+below is a fuction for transfer abberation name to full name
+```{r}
+#'x' is the column of a data.frame that holds 2 digit state codes
+stateFromLower <-function(x) {
+  #read 52 state codes into local variable [includes DC (Washington D.C. and PR (Puerto Rico)]
+  st.codes<-data.frame(
+    state=as.factor(c("AK", "AL", "AR", "AZ", "CA", "CO", "CT", "DC", "DE", "FL", "GA",
+                      "HI", "IA", "ID", "IL", "IN", "KS", "KY", "LA", "MA", "MD", "ME",
+                      "MI", "MN", "MO", "MS",  "MT", "NC", "ND", "NE", "NH", "NJ", "NM",
+                      "NV", "NY", "OH", "OK", "OR", "PA", "PR", "RI", "SC", "SD", "TN",
+                      "TX", "UT", "VA", "VT", "WA", "WI", "WV", "WY")),
+    full=as.factor(c("alaska","alabama","arkansas","arizona","california","colorado",
+                     "connecticut","district of columbia","delaware","florida","georgia",
+                     "hawaii","iowa","idaho","illinois","indiana","kansas","kentucky",
+                     "louisiana","massachusetts","maryland","maine","michigan","minnesota",
+                     "missouri","mississippi","montana","north carolina","north dakota",
+                     "nebraska","new hampshire","new jersey","new mexico","nevada",
+                     "new york","ohio","oklahoma","oregon","pennsylvania","puerto rico",
+                     "rhode island","south carolina","south dakota","tennessee","texas",
+                     "utah","virginia","vermont","washington","wisconsin",
+                     "west virginia","wyoming"))
+  )
+  #create an nx1 data.frame of state codes from source column
+  st.x<-data.frame(state=x)
+  #match source codes with codes from 'st.codes' local variable and use to return the full state name
+  refac.x<-st.codes$full[match(st.x$state,st.codes$state)]
+  #return the full state names in the same order in which they appeared in the original source
+  return(refac.x)
+  
+}
+```
+
+```{r}
+temp = as.data.frame(cbind(unlist(auc_matrix["CA",]),rownames(auc_matrix)))
+colnames(temp)=c("value","region")
+temp$region = stateFromLower(temp$region)
+temp$value = as.numeric(as.character(temp$value))
+
+temp = temp[complete.cases(temp),]
+
+library(choroplethr)
+state_choropleth(temp, title = "AUC on Different States based on Model from California",num_colors = 9,legend = "AUC")
+```
+
+```{r}
+temp = as.data.frame(cbind(unlist(auc_matrix["IL",]),rownames(auc_matrix)))
+colnames(temp)=c("value","region")
+temp$region = stateFromLower(temp$region)
+temp$value = as.numeric(as.character(temp$value))
+
+temp = temp[complete.cases(temp),]
+
+library(choroplethr)
+state_choropleth(temp, title = "AUC on Different States based on Model from Illinois",num_colors = 9,legend = "AUC")
+```
