@@ -10,8 +10,7 @@ knitr::opts_chunk$set(echo = TRUE)
 ```
 
 ```{r}
-load("~/Desktop/Freddie Mac data/prepared_data.RData")
-
+load("~/Desktop/Freddie_Mac_data/save_model/prepared_data.RData")
 library(caret)
 library(rpart.plot)
 library(rpart)
@@ -28,6 +27,33 @@ auc_calucator = function(fitted.results, test_data_y) {
   return(c(auc,prf))
 }
 ```
+
+TREE
+
+```{r}
+train$def_flag = as.factor(as.logical(train$def_flag))
+test$def_flag = as.factor(as.logical(test$def_flag))
+p = sum(train$def_flag==TRUE)/nrow(train)
+
+tree_model = rpart(def_flag~., data = train, method = "class", 
+                   parms = list(split = "information"),
+                   control = rpart.control(minsplit = 2))
+
+summary(tree_model)
+plot(tree_model)
+text(tree_model ,pretty =0)
+rpart.plot(tree_model)
+
+test_result = predict(tree_model,test,type = "prob")
+result = test_result[,2]
+class_result = ifelse(result>0.1, "TRUE", "FALSE")
+table(predict=class_result,real=test$def_flag)
+
+temp = auc_calucator(test_result[,2],test$def_flag)
+auc = temp[[1]];auc
+plot(temp[[2]]);lines(x = c(0,1), y = c(0,1))
+```
+
 
 ```{r}
 boost_model =gbm(def_flag~., data=train, distribution=

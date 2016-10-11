@@ -4,7 +4,7 @@ author: "Yazhe"
 date: "9/29/2016"
 output: pdf_document
 ---
-$min\frac{1}{2N}\sum _{i=1}^{N} {(y_i-\beta_0-x_i ^ \mathrm{ T } ) ^2+\lambda[(1-\alpha)*\left \|  \beta\right \|_2^2/2+\alpha*\left \|  \beta\right \|_1]}$
+$min\frac{1}{2N}\sum _{i=1}^{N} {(y_i-\beta_0-\beta x_i ^ \mathrm{ T } ) ^2+\lambda[(1-\alpha)*\left \|  \beta\right \|_2^2/2+\alpha*\left \|  \beta\right \|_1]}$
 
 ```{r}
 library(ROCR)
@@ -404,10 +404,10 @@ theTable = as.data.frame(state)
 theTable <- within(theTable, 
                    state <- factor(state, 
                                       levels=names(sort(table(state), 
-                                                        decreasing=TRUE))))
+                                                        increasing=TRUE))))
 
 m <- ggplot(theTable, aes(x=state))
-m + stat_count(width = 0.5) + theme(axis.text.x = element_text(angle = 90, hjust = 1))
+m + stat_count(width = 0.5) + coord_flip()
 
 ```
 
@@ -576,4 +576,13 @@ temp$value = as.numeric(as.character(temp$value))
 temp = temp[complete.cases(temp),]
 
 state_choropleth(temp, title = "AUC on Different States based on Model from Taxes",num_colors = 9,legend = "AUC")
+```
+
+
+```{r}
+state.order = names(sort(table(state),decreasing=T))
+temp <- auc_matrix[,c(state.order)]
+temp <- temp[c(state.order),]
+write.csv(temp, "tempt.csv")
+heatmap <- heatmap.2(temp, Rowv=F, Colv=F, col = heat.colors(256), scale="column", margins=c(5,10))
 ```
