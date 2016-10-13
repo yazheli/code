@@ -16,17 +16,27 @@ library(rpart.plot)
 library(rpart)
 library(gbm)
 library(ROCR)
+library(mlr)
+library(unbalanced)
+library(randomForest)
+library(doParallel)  
 ```
 
 ```{r}
 auc_calucator = function(fitted.results, test_data_y) {
   pr <- prediction(fitted.results, test_data_y)
-  prf <- performance(pr, measure = "tpr", x.measure = "fpr")
-  auc <- performance(pr, measure = "auc")
+  prf <- ROCR::performance(pr, measure = "tpr", x.measure = "fpr")
+  auc <- ROCR::performance(pr, measure = "auc")
   auc <- auc@y.values[[1]]
   return(c(auc,prf))
 }
 ```
+
+Undersampleing data
+```{r}
+
+```
+
 
 TREE
 
@@ -108,3 +118,178 @@ auc = temp[[1]];auc
 plot(temp[[2]]);lines(x = c(0,1), y = c(0,1))
 ```
 
+Random Forest
+
+```{r}
+load("~/Desktop/Freddie_Mac_data/save_model/prepared_data.RData")
+train$def_flag = as.factor(as.logical(train$def_flag))
+test$def_flag = as.factor(as.logical(test$def_flag))
+new_test = test[sample(1:nrow(test), size = nrow(test)/5),]
+new_train = train[sample(1:nrow(train), size = nrow(train)/5),]
+```
+in oredr to take a glance, save time, sample 20% data
+
+```{r}
+new_train_flag = new_train$def_flag
+new_test_flag = new_test$def_flag
+```
+
+no sampling
+```{r}
+#input trainning set, testset, number of trees and mtry, return auc which is the model
+#builded on training set and applied on test set
+fitRF = function(train.data, test.data, num_tree, num_mtry){
+  rf_model =randomForest(def_flag~., data=train.data, mtry = num_mtry,
+                       ntree = num_tree)
+  predict=predict(rf_model, newdata = test.data, type = "prob")[,2]
+  auc = auc_calucator(predict,test.data$def_flag)[[1]]
+  return(auc)
+}
+
+tuneRF = function(data, num_of_tree, num_of_mtry){
+  tt = nrow(data)
+  a = split(c(1:tt), 1:5)
+  auc = rep(0,5)
+  for (i in 1:5){
+  auc[i] = fitRF(train.data = data[a[[i]],], 
+      test.data = data[-a[[i]],]
+      ,num_tree = num_of_tree, num_mtry = num_of_mtry)
+   }
+  return(mean(auc))
+}
+
+#5 folds CV with 30 trees and sqrt(p) mytry return mean AUC
+tuneRF(new_train, num_of_tree = 30, num_of_mtry = sqrt(p))
+
+tune_grid = expand.grid(num_of_tree=c(1:20)*20, num_of_mtry=c(p,p/2,sqrt(p)))
+
+auc_record = rep(0,60)
+
+for (i in 1:60){
+  auc_record[i] = tuneRF(new_train, tune_grid[,1][i],tune_grid[,2][i])
+  print(i)
+}
+
+CVresult = cbind(tune_grid,auc_record)
+
+temp = CVresult
+temp$num_of_mtry = as.factor(temp$num_of_mtry)
+p <- ggplot(temp, aes(x=num_of_tree, y=auc_record, group=num_of_mtry,colour = num_of_mtry))
+p + geom_line()
+
+max_index = which.max(CVresult$auc_record)
+#fit a model based on training set with optimical parameter, and applied on test set
+#return AUC
+fitRF(new_train, new_test, num_tree=CVresult$num_of_tree[max_index], 
+      num_mtry=CVresult$num_of_mtry[max_index])
+```
+
+random under sample
+```{r}
+Y = new_train[,8]
+Y = as.numeric(Y)
+X = new_train[,-8]
+
+Y[which(Y==1)] = 0
+Y[which(Y==2)] = 1
+ab = ubUnder(X,Y, perc = 40, method = "percPos")
+tr = cbind(ab[[1]],def_flag = ab[[2]])
+tr$def_flag = as.factor(as.logical(tr$def_flag))
+```
+
+```{r}
+p=ncol(tr)
+tuneRF(tr, num_of_tree = 30, num_of_mtry = sqrt(p))
+tune_grid = expand.grid(num_of_tree=c(1:20)*20, num_of_mtry=c(p,p/2,sqrt(p)))
+
+auc_record = rep(0,60)
+
+for (i in 1:60){
+  auc_record[i] = tuneRF(tr, tune_grid[,1][i],tune_grid[,2][i])
+  print(i)
+}
+CVresult = cbind(tune_grid,auc_record)
+max_index = which.max(CVresult$auc_record)
+
+fitRF(tr, new_test, num_tree=CVresult$num_of_tree[max_index], 
+      num_mtry=CVresult$num_of_mtry[max_index])
+```
+
+make a function to try different undersampling percentage
+```{r}
+Y = new_train[,8]
+Y = as.numeric(Y)
+X = new_train[,-8]
+Y[which(Y==1)] = 0
+Y[which(Y==2)] = 1
+
+diff_per = function (per) {
+  ab = ubUnder(X,Y, perc = per, method = "percPos")
+  tr = cbind(ab[[1]],def_flag = ab[[2]])
+  tr$def_flag = as.factor(as.logical(tr$def_flag))
+  p=ncol(tr)
+  tune_grid = expand.grid(num_of_tree=c(1:20)*20, num_of_mtry=c(p,p/2,sqrt(p)))
+  auc_record = rep(0,60)
+  for (i in 1:60){
+    auc_record[i] = tuneRF(tr, tune_grid[,1][i],tune_grid[,2][i])
+  }
+  CVresult = cbind(tune_grid,auc_record)
+  max_index = which.max(CVresult$auc_record)
+  final_result = fitRF(tr, new_test, num_tree=CVresult$num_of_tree[max_index], 
+      num_mtry=CVresult$num_of_mtry[max_index])
+  return(final_result)
+}
+
+per = seq(20,50)
+rr_storage = matrix(rep(seq(20,50),11),ncol=11)
+
+for (i in 1:10){
+  rr_storage[,i] = unlist(lapply(per, diff_per))
+}
+
+
+
+pl = as.data.frame(cbind(auc = rr, percentage = per))
+pl$auc = as.numeric(pl$auc)
+pl$percentage = as.numeric(pl$percentage)
+p <- ggplot(pl, aes(x=percentage, y=auc))
+p + geom_line()
+
+```
+
+use train function
+```{r}
+customRF <- list(type = "Classification", library = "randomForest", loop = NULL)
+customRF$parameters <- data.frame(parameter = c("mtry", "ntree"), class = rep("numeric", 2), label = c("mtry", "ntree"))
+customRF$grid <- function(x, y, len = NULL, search = "grid") {}
+customRF$fit <- function(x, y, wts, param, lev, last, weights, classProbs, ...) {
+    randomForest(x, y, mtry = param$mtry, ntree=param$ntree, ...)
+}
+customRF$predict <- function(modelFit, newdata, preProc = NULL, submodels = NULL)
+    predict(modelFit, newdata)
+customRF$prob <- function(modelFit, newdata, preProc = NULL, submodels = NULL)
+    predict(modelFit, newdata, type = "prob")
+customRF$sort <- function(x) x[order(x[,1]),]
+customRF$levels <- function(x) x$classes
+customRF
+```
+
+```{r}
+X = new_train[,-8]
+Y = new_train[,8]
+Y = as.numeric(Y)
+Y[which(Y==1)] = 'no'
+Y[which(Y==2)] = 'yes'
+p = ncol(X)
+tune_grid = expand.grid(ntree=c(1:20)*20, mtry=c(p,p/2,sqrt(p)))
+
+myControl <- trainControl(method='cv',classProbs = TRUE,number=5,summaryFunction = twoClassSummary)
+
+tune_rf = caret::train(X, Y, method=customRF,  
+metric="ROC", trControl=myControl, tuneGrid=tune_grid,allowParallel=T)
+
+save(tune_rf,file="tune_rf.RData")
+
+plot(tune_rf)
+plot(tune_rf,plotType = "level")
+```
