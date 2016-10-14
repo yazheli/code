@@ -1,0 +1,309 @@
+---
+title: "bagging RF tree and Undersampling"
+author: "Yazhe"
+date: "17/10/2016"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r, message=FALSE, warning=FALSE}
+load("~/Desktop/Freddie_Mac_data/save_model/prepared_data.RData")
+library(caret)
+library(rpart.plot)
+library(rpart)
+library(gbm)
+library(ROCR)
+library(mlr)
+library(unbalanced)
+library(randomForest)
+library(doParallel) 
+library(ggplot2)
+library(Rmisc) 
+library(parallel)
+```
+
+```{r}
+auc_calucator = function(fitted.results, test_data_y) {
+  pr <- prediction(fitted.results, test_data_y)
+  prf <- ROCR::performance(pr, measure = "tpr", x.measure = "fpr")
+  auc <- ROCR::performance(pr, measure = "auc")
+  auc <- auc@y.values[[1]]
+  return(c(auc,prf))
+}
+```
+
+For the time reason, I just use 10% data
+```{r}
+train$def_flag = as.factor(as.logical(train$def_flag))
+test$def_flag = as.factor(as.logical(test$def_flag))
+new_test = test[sample(1:nrow(test), size = nrow(test)/10),]
+new_train = train[sample(1:nrow(train), size = nrow(train)/10),]
+```
+
+
+#Use train function 
+In order to tune "mtry" parameter, make a customRF function
+```{r}
+customRF <- list(type = "Classification", library = "randomForest", loop = NULL)
+customRF$parameters <- data.frame(parameter = c("mtry", "ntree"), class = rep("numeric", 2), label = c("mtry", "ntree"))
+customRF$grid <- function(x, y, len = NULL, search = "grid") {}
+customRF$fit <- function(x, y, wts, param, lev, last, weights, classProbs, ...) {
+    randomForest(x, y, mtry = param$mtry, ntree=param$ntree, ...)
+}
+customRF$predict <- function(modelFit, newdata, preProc = NULL, submodels = NULL)
+    predict(modelFit, newdata)
+customRF$prob <- function(modelFit, newdata, preProc = NULL, submodels = NULL)
+    predict(modelFit, newdata, type = "prob")
+customRF$sort <- function(x) x[order(x[,1]),]
+customRF$levels <- function(x) x$classes
+customRF
+```
+
+```{r}
+X = new_train[,-8]
+Y = new_train[,8]
+Y = as.numeric(Y)
+Y[which(Y==1)] = 'no'
+Y[which(Y==2)] = 'yes'
+```
+
+Create the tune grid
+```{r}
+p = ncol(X)#number of predictors
+tune_grid = expand.grid(ntree=c(2:10)*50, mtry=c(p,p/2,sqrt(p)))
+head(tune_grid)
+
+myControl <- trainControl(method='cv',classProbs = TRUE,number=3,summaryFunction = twoClassSummary)
+
+tune_rf = caret::train(X, Y, method=customRF,  
+metric="ROC", trControl=myControl, tuneGrid=tune_grid,allowParallel=T)
+```
+
+```{r}
+plot(tune_rf)
+```
+
+```{r fig.width=5, fig.height=7}
+tune_rf$finalModel
+varImpPlot(tune_rf$finalModel,type=2,main = "Variable Importance")
+```
+
+```{r}
+predict=predict (tune_rf ,newdata = new_test, type='prob')
+head(predict)
+temp = auc_calucator(predict[,2],new_test$def_flag)
+auc = temp[[1]];auc
+```
+
+```{r fig.width=5, fig.height=5}
+plot(temp[[2]]);lines(x = c(0,1), y = c(0,1))
+```
+
+#Random Under Sample
+
+##Random Undersample, Majority:Minority = 50:50
+```{r}
+Y = new_train[,8]
+Y = as.numeric(Y)
+X = new_train[,-8]
+Y[which(Y==1)] = 0
+Y[which(Y==2)] = 1
+
+under_sample = ubUnder(X,Y, perc = 50, method = "percPos")
+un_train_set = cbind(under_sample[[1]],def_flag = under_sample[[2]])
+un_train_set$def_flag[which(un_train_set$def_flag == 1)] = 'yes'
+un_train_set$def_flag[which(un_train_set$def_flag == 0)] = 'no'
+```
+
+```{r}
+tune_grid = expand.grid(ntree=c(2:10)*50, mtry=c(p,p/2,sqrt(p)))
+myControl <- trainControl(method='cv',classProbs = TRUE,number=3,summaryFunction = twoClassSummary)
+tune_rf = caret::train(def_flag~., data = un_train_set, method=customRF,  
+metric="ROC", trControl=myControl, tuneGrid=tune_grid,allowParallel=T)
+plot(tune_rf)
+```
+
+```{r fig.width=5, fig.height=7}
+tune_rf$finalModel
+varImpPlot(tune_rf$finalModel,type=2,main = "Variable Importance")
+```
+
+```{r}
+predict=predict (tune_rf ,newdata = new_test, type='prob')
+temp = auc_calucator(predict[,2],new_test$def_flag)
+auc = temp[[1]];auc
+```
+
+```{r fig.width=5, fig.height=5}
+plot(temp[[2]]);lines(x = c(0,1), y = c(0,1))
+```
+we can see after under sample the results become better.
+
+##change undersample percentage, to select the best under sample percentage
+```{r}
+un_frac_sample = function (frac){
+  Y = new_train[,8]
+  Y = as.numeric(Y)
+  X = new_train[,-8]
+  Y[which(Y==1)] = 0
+  Y[which(Y==2)] = 1
+  under_sample = ubUnder(X,Y, perc = frac, method = "percPos")
+  un_train_set = cbind(under_sample[[1]],def_flag = under_sample[[2]])
+  un_train_set$def_flag[which(un_train_set$def_flag == 1)] = 'yes'
+  un_train_set$def_flag[which(un_train_set$def_flag == 0)] = 'no'
+  return(un_train_set)
+}
+```
+
+```{r}
+un_auc_frac = function(frac){
+   un_train_set = un_frac_sample(frac)
+   p = ncol(un_train_set)-1
+   tune_grid = expand.grid(ntree=c(1:20)*20, mtry=c(p,p/2,sqrt(p)))
+   myControl = trainControl(method='cv',classProbs = TRUE,number=3,summaryFunction =     twoClassSummary)
+   tune_rf = caret::train(def_flag~., data = un_train_set, method=customRF,  
+   metric="ROC", trControl=myControl, tuneGrid=tune_grid,allowParallel=T)
+   predict=predict (tune_rf ,newdata = new_test, type='prob')
+   temp = auc_calucator(predict[,2],new_test$def_flag)
+   auc = temp[[1]]
+   return(auc)
+}
+
+ten_time_auc=function(frac){
+  frac = rep(frac,10)
+  auc = lapply(frac, un_auc_frac)
+  return(unlist(auc))
+}
+```
+
+```{r}
+results = mclapply( c(10,15,20,25,30,40,50), FUN=ten_time_auc )
+```
+
+```{r}
+auc = as.data.frame(unlist(results))
+auc$per = c(rep(10,10),rep(15,10),rep(20,10),rep(25,10),
+            rep(30,10),rep(40,10),rep(50,10))
+names(auc)=c('auc','per')
+
+tg <- summarySE(auc, measurevar="auc", groupvars='per');tg
+tg$per = as.factor(tg$per)
+
+ggplot(tg, aes(x=per, y=auc,group=1)) + 
+    geom_errorbar(aes(ymin=auc-se, ymax=auc+se), width=.1) +
+    geom_line() +
+    geom_point()
+```
+
+```{r}
+un_auc_frac = function(frac){
+   un_train_set = un_frac_sample(frac)
+   p = ncol(un_train_set)-1
+   tune_grid = expand.grid(ntree=c(1:20)*20, mtry=c(p,p/2,sqrt(p)))
+   myControl = trainControl(method='cv',classProbs = TRUE,number=3,summaryFunction =     twoClassSummary)
+   tune_rf = caret::train(def_flag~., data = un_train_set, method=customRF,  
+   metric="ROC", trControl=myControl, tuneGrid=tune_grid,allowParallel=T)
+   return(tune_rf)
+}
+
+
+ten_time_auc=function(frac){
+  frac = rep(frac,10)
+  best_rf = lapply(frac, un_auc_frac)
+  return(best_rf)
+}   
+```
+
+```{r}
+frac = tg$per[which.max(tg$auc)];frac
+
+bestrf = ten_time_auc(as.numeric(as.character(frac)))
+bestrf[[1]]$finalModel
+```
+
+```{r fig.height=7,fig.width=5}
+varImpPlot(bestrf[[1]]$finalModel,type=2, main = "Variable Importance")
+```
+
+ensamble the random forest model's prediction
+```{r}
+predict = matrix(0, nrow = nrow(new_test),ncol = 10)
+
+for (i in 1:10){
+  predict[,i]=predict (bestrf[[i]] ,newdata = new_test, type='prob')[,2]
+}
+
+predict_result = rowMeans(predict)
+
+temp = auc_calucator(predict[,2],new_test$def_flag)
+auc = temp[[1]];auc
+```
+
+```{r fig.width=5, fig.height=5}
+plot(temp[[2]]);lines(x = c(0,1), y = c(0,1))
+```
+
+Classification Tree
+TREE
+
+```{r}
+load("~/Desktop/Freddie_Mac_data/save_model/prepared_data.RData")
+Y = train[,8]
+Y = as.numeric(Y)
+X = train[,-8]
+test$def_flag = as.factor(as.logical(test$def_flag))
+
+under_sample = ubUnder(X,Y, perc = 50, method = "percPos")
+un_train_set = cbind(under_sample[[1]],def_flag = under_sample[[2]])
+un_train_set$def_flag = as.factor(as.logical(un_train_set$def_flag))
+
+tree_model = rpart(def_flag~., data = un_train_set, method = "class", 
+                   parms = list(split = "information"),
+                   control = rpart.control(minsplit = 2))
+
+summary(tree_model)
+
+rpart.plot(tree_model)
+```
+
+```{r fig.width=5, fig.height=5}
+test_result = predict(tree_model,test,type = "prob")
+result = test_result[,2]
+
+temp = auc_calucator(test_result[,2],test$def_flag)
+auc = temp[[1]];auc
+plot(temp[[2]]);lines(x = c(0,1), y = c(0,1))
+```
+
+try different perc
+```{r}
+tree_under = function(per){
+  under_sample = ubUnder(X,Y, perc = per, method = "percPos")
+  un_train_set = cbind(under_sample[[1]],def_flag = under_sample[[2]])
+  un_train_set$def_flag = as.factor(as.logical(un_train_set$def_flag))
+  tree_model = rpart(def_flag~., data = un_train_set, method = "class", 
+                   parms = list(split = "information"),
+                   control = rpart.control(minsplit = 2))
+  test_result = predict(tree_model,test,type = "prob")
+  result = test_result[,2]
+}
+
+tree_under = lapply(seq(20,50,5),tree_under)
+
+preds = matrix(unlist(tree_under),nrow = nrow(test))
+pred.mat = prediction(preds, labels = matrix(test$def_flag, 
+                nrow = length(test$def_flag), ncol = 7) )
+perf.mat = ROCR::performance(pred.mat, "tpr", "fpr")
+
+
+tt = unlist(ROCR::performance(pred.mat, "auc")@y.values);tt
+```
+
+```{r fig.height=5, fig.width=7}
+plot(perf.mat, type = c("b"),pch=1,col = 1:7) #plot
+ legend("topleft", legend = paste0(paste(seq(20,50,5),seq="AUC"), round(tt, digits = 3)), col=1:7, pch=1) # optional legend
+```
+

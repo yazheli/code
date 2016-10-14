@@ -1,0 +1,223 @@
+---
+title: "BRT"
+author: "Yazhe"
+date: "17/10/2016"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+load("~/Desktop/Freddie_Mac_data/save_model/prepared_data.RData")
+library(caret)
+library(rpart.plot)
+library(rpart)
+library(gbm)
+library(ROCR)
+library(mlr)
+library(unbalanced)
+library(randomForest)
+library(doParallel) 
+library(ggplot2)
+library(Rmisc) 
+library(parallel)
+```
+
+```{r}
+auc_calucator = function(fitted.results, test_data_y) {
+  pr <- prediction(fitted.results, test_data_y)
+  prf <- ROCR::performance(pr, measure = "tpr", x.measure = "fpr")
+  auc <- ROCR::performance(pr, measure = "auc")
+  auc <- auc@y.values[[1]]
+  return(c(auc,prf))
+}
+```
+
+In oredr to take a glance, save time, sample 10% data
+```{r}
+new_test = test[sample(1:nrow(test), size = nrow(test)/10),]
+new_train = train[sample(1:nrow(train), size = nrow(train)/10),]
+```
+
+
+#boosted regression tree
+```{r, warning=FALSE, fig.width= 7}
+boost_model =gbm(def_flag~., data=new_train, distribution=
+                    "gaussian",n.trees = 200 , interaction.depth =2)
+
+temp = summary (boost_model);temp
+
+tt = temp[1:10,2]
+barplot(tt,names.arg = rownames(temp)[1:10], main = "Variable Importance")
+
+y.predict=predict (boost_model ,newdata = new_test, n.trees = 200, type='response')
+```
+
+```{r fig.width=5, fig.height=5}
+temp = auc_calucator(y.predict,new_test$def_flag)
+auc = temp[[1]];auc
+plot(temp[[2]]);lines(x = c(0,1), y = c(0,1))
+```
+
+```{r}
+new_train$def_flag = as.factor(as.logical(new_train$def_flag))
+new_test$def_flag = as.factor(as.logical(new_test$def_flag))
+
+gbmGrid <- expand.grid(interaction.depth=(1:3), n.trees=(2:10)*200, shrinkage=.1)
+gbmGrid$n.minobsinnode = rep(10,nrow(gbmGrid))
+head(gbmGrid)
+
+bootControl <- trainControl(method='cv',classProbs = TRUE,number=3,summaryFunction = twoClassSummary)
+
+X = new_train[,-8]
+Y = new_train[,8]
+Y = as.numeric(Y)
+Y[which(Y==1)] = 'no'
+Y[which(Y==2)] = 'yes'
+```
+
+```{r, warning=FALSE}
+gmbFit<- caret::train(X,Y, 
+               method = "gbm", 
+               verbose = F, 
+               trControl = bootControl, 
+               bag.fraction=0.5,
+               metric="ROC",
+               tuneGrid=gbmGrid)
+```
+
+```{r}
+plot(gmbFit)
+```
+
+```{r fig.width= 7}
+gmbFit$bestTune
+temp = summary(gmbFit$finalModel);temp
+tt = temp[1:10,2]
+barplot(tt,names.arg = rownames(temp)[1:10],cex.names=0.8,main="Top 10 Variable Importance")
+```
+
+```{r fig.width= 5, fig.height=5}
+y.predict=predict (gmbFit ,newdata = new_test, type='prob')
+head(y.predict)
+temp = auc_calucator(y.predict[,2],new_test$def_flag)
+auc = temp[[1]];auc
+plot(temp[[2]]);lines(x = c(0,1), y = c(0,1))
+```
+
+#Random Under Sample + BRT
+```{r, warning=FALSE}
+un_frac_sample = function (frac){
+  Y = new_train[,8]
+  Y = as.numeric(Y)
+  X = new_train[,-8]
+  Y[which(Y==1)] = 0
+  Y[which(Y==2)] = 1
+  under_sample = ubUnder(X,Y, perc = frac, method = "percPos")
+  un_train_set = cbind(under_sample[[1]],def_flag = under_sample[[2]])
+  un_train_set$def_flag[which(un_train_set$def_flag == 1)] = 'yes'
+  un_train_set$def_flag[which(un_train_set$def_flag == 0)] = 'no'
+  return(un_train_set)
+}
+
+un_auc_frac = function(frac){
+   un_train_set = un_frac_sample(frac)
+   gbmGrid <- expand.grid(interaction.depth=(1:3), n.trees=(2:10)*200, shrinkage=.1)
+   gbmGrid$n.minobsinnode = rep(10,nrow(gbmGrid))
+   myControl = trainControl(method='cv',classProbs = TRUE,number=3,summaryFunction =       twoClassSummary)
+   gmbFit<- caret::train(def_flag~., data = un_train_set, 
+               method = "gbm", 
+               verbose = F, 
+               trControl = bootControl, 
+               bag.fraction=0.5,
+               metric="ROC",
+               tuneGrid=gbmGrid)
+   predict=predict (gmbFit ,newdata = new_test, type='prob')
+   temp = auc_calucator(predict[,2],new_test$def_flag)
+   auc = temp[[1]]
+   return(auc)
+}
+```
+
+```{r}
+ten_time_auc=function(frac){
+  frac = rep(frac,10)
+  auc = lapply(frac, un_auc_frac)
+  return(unlist(auc))
+}
+```
+
+```{r}
+results = mclapply( c(10,15,20,25,30,40,50), FUN=ten_time_auc )
+```
+
+```{r}
+auc = as.data.frame(unlist(results))
+auc$per = c(rep(10,10),rep(15,10),rep(20,10),rep(25,10),
+            rep(30,10),rep(40,10),rep(50,10))
+names(auc)=c('auc','per')
+
+tg <- summarySE(auc, measurevar="auc", groupvars='per');tg
+tg$per = as.factor(tg$per)
+
+ggplot(tg, aes(x=per, y=auc,group=1)) + 
+    geom_errorbar(aes(ymin=auc-se, ymax=auc+se), width=.1) +
+    geom_line() +
+    geom_point()
+```
+
+```{r}
+un_auc_frac = function(frac){
+   un_train_set = un_frac_sample(frac)
+   gbmGrid <- expand.grid(interaction.depth=(1:3), n.trees=(2:10)*200, shrinkage=.1)
+   gbmGrid$n.minobsinnode = rep(10,nrow(gbmGrid))
+   myControl = trainControl(method='cv',classProbs = TRUE,number=3,summaryFunction =       twoClassSummary)
+   gmbFit<- caret::train(def_flag~., data = un_train_set, 
+               method = "gbm", 
+               verbose = F, 
+               trControl = bootControl, 
+               bag.fraction=0.5,
+               metric="ROC",
+               tuneGrid=gbmGrid)
+   return(gmbFit)
+}
+
+ten_time_auc=function(frac){
+  frac = rep(frac,10)
+  best = lapply(frac, un_auc_frac)
+  return(best)
+}   
+```
+
+```{r, warning=FALSE}
+frac = tg$per[which.max(tg$auc)];frac
+bestBRT = ten_time_auc(as.numeric(as.character(frac)))
+bestBRT[[1]]$finalModel
+```
+
+```{r fig.width= 7}
+bestBRT[[1]]$bestTune
+temp = summary(bestBRT[[1]]$finalModel);temp
+tt = temp[1:10,2]
+barplot(tt,names.arg = rownames(temp)[1:10],cex.names=0.8,main="Top 10 Variable Importance")
+```
+
+ensamble the BRT model's prediction
+```{r}
+predict = matrix(0, nrow = nrow(new_test),ncol = 10)
+
+for (i in 1:10){
+  predict[,i]=predict (bestBRT[[i]] ,newdata = new_test, type='prob')[,2]
+}
+
+predict_result = rowMeans(predict)
+
+temp = auc_calucator(predict[,2],new_test$def_flag)
+auc = temp[[1]];auc
+```
+
+```{r fig.width=5, fig.height=5}
+plot(temp[[2]]);lines(x = c(0,1), y = c(0,1))
+```

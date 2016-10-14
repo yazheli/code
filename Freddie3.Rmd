@@ -34,20 +34,15 @@ auc_calucator = function(fitted.results, test_data_y) {
 }
 ```
 
-boosted tree
+boosted regression tree
 ```{r}
 boost_model =gbm(def_flag~., data=train, distribution=
-                    "bernoulli",n.trees = 200 , interaction.depth =2)
+                    "gaussian",n.trees = 200 , interaction.depth =2)
 summary (boost_model)
 y.predict=predict (boost_model ,newdata = test, n.trees = 200, type='response')
 head(y.predict)
 ```
 
-```{r}
-result = y.predict
-result = ifelse(result>0.2, "TRUE", "FALSE")
-table(predict = result, test = test$def_flag)
-```
 
 ```{r fig.width=5, fig.height=5}
 temp = auc_calucator(y.predict,test$def_flag)
@@ -364,18 +359,52 @@ temp = ten_time_auc(50)
 
 
 library(parallel)
-results = mclapply( seq(20, 50,by=10), FUN=ten_time_auc )
+results = mclapply( c(5,10,15,20,25,30,40,50), FUN=ten_time_auc )
 save(results,file="un_sample_rf.RData")
 
-auc = as.data.frame(c(results[[1]],results[[2]]))
-auc$per = c(rep(40,5),rep(50,5))
+auc = as.data.frame(unlist(results))
+auc$per = c(rep(20,10),rep(30,10),rep(40,10),rep(50,10))
 names(auc)=c('auc','per')
-tg <- summarySE(auc, measurevar="auc", groupvars='per')
+tg <- summarySE(auc, measurevar="auc", groupvars='per');tg
 tg$per = as.factor(tg$per)
 ggplot(tg, aes(x=per, y=auc,group=1)) + 
     geom_errorbar(aes(ymin=auc-se, ymax=auc+se), width=.1) +
     geom_line() +
     geom_point()
+```
+
+choose percentage equal to 20
+```{r}
+un_auc_frac = function(frac){
+   un_train_set = un_frac_sample(frac)
+   p = ncol(un_train_set)-1
+   tune_grid = expand.grid(ntree=c(1:20)*20, mtry=c(p,p/2,sqrt(p)))
+   myControl = trainControl(method='cv',classProbs = TRUE,number=5,summaryFunction =     twoClassSummary)
+   tune_rf = caret::train(def_flag~., data = un_train_set, method=customRF,  
+   metric="ROC", trControl=myControl, tuneGrid=tune_grid,allowParallel=T)
+   return(tune_rf)
+}
+
+ten_time_auc=function(frac){
+  frac = rep(frac,10)
+  rf20 = lapply(frac, un_auc_frac)
+  return(rf20)
+}   
+
+bestrf = ten_time_auc(20)
+bestrf[[1]]
+
+predict = matrix(0, nrow = nrow(new_test),ncol = 10)
+
+for (i in 1:10){
+  predict[,i]=predict (bestrf[[i]] ,newdata = new_test, type='prob')[,2]
+}
+
+predict_result = rowMeans(predict)
+
+temp = auc_calucator(predict[,2],new_test$def_flag)
+auc = temp[[1]];auc
+plot(temp[[2]]);lines(x = c(0,1), y = c(0,1))
 ```
 
 TREE
