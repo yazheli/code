@@ -64,8 +64,17 @@ plot(temp[[2]]);lines(x = c(0,1), y = c(0,1))
 ```{r}
 new_train$def_flag = as.factor(as.logical(new_train$def_flag))
 new_test$def_flag = as.factor(as.logical(new_test$def_flag))
+```
 
-gbmGrid <- expand.grid(interaction.depth=(1:3), n.trees=(2:10)*200, shrinkage=.1)
+##tune parameter
+1. n.trees – Number of trees (the number of gradient boosting iteration) i.e. N. Increasing N reduces the error on training set, but setting it too high may lead to over-fitting.
+
+2. interaction.depth (Maximum nodes per tree) - number of splits it has to perform on a tree (starting from a single node). Default Setting : 6 - node tree appears to do an excellent job 
+
+3. shrinkage (Learning Rate) – It is considered as a learning rate. Default value = max(0.01, 0.1*min(1, nl/10000)). uses 0.1 for all data sets with more than 10,000 records.
+
+```{r}
+gbmGrid <- expand.grid(interaction.depth=(3:6), n.trees=(1:40)*100, shrinkage=.01)
 gbmGrid$n.minobsinnode = rep(10,nrow(gbmGrid))
 head(gbmGrid)
 
@@ -124,9 +133,9 @@ un_frac_sample = function (frac){
 
 un_auc_frac = function(frac){
    un_train_set = un_frac_sample(frac)
-   gbmGrid <- expand.grid(interaction.depth=(1:3), n.trees=(2:10)*200, shrinkage=.1)
+   gbmGrid <- expand.grid(interaction.depth=(3:6), n.trees=(1:40)*100, shrinkage=.01)
    gbmGrid$n.minobsinnode = rep(10,nrow(gbmGrid))
-   myControl = trainControl(method='cv',classProbs = TRUE,number=3,summaryFunction =       twoClassSummary)
+   bootControl = trainControl(method='cv',classProbs = TRUE,number=3,summaryFunction =       twoClassSummary)
    gmbFit<- caret::train(def_flag~., data = un_train_set, 
                method = "gbm", 
                verbose = F, 
@@ -150,13 +159,13 @@ ten_time_auc=function(frac){
 ```
 
 ```{r}
-results = mclapply( c(10,15,20,25,30,40,50), FUN=ten_time_auc )
+results = mclapply( c(5,10,15,20,25,30,40), FUN=ten_time_auc )
 ```
 
 ```{r}
 auc = as.data.frame(unlist(results))
-auc$per = c(rep(10,10),rep(15,10),rep(20,10),rep(25,10),
-            rep(30,10),rep(40,10),rep(50,10))
+auc$per = c(rep(5,10),rep(10,10),rep(15,10),rep(20,10),
+            rep(25,10),rep(30,10),rep(40,10))
 names(auc)=c('auc','per')
 
 tg <- summarySE(auc, measurevar="auc", groupvars='per');tg
@@ -171,9 +180,9 @@ ggplot(tg, aes(x=per, y=auc,group=1)) +
 ```{r}
 un_auc_frac = function(frac){
    un_train_set = un_frac_sample(frac)
-   gbmGrid <- expand.grid(interaction.depth=(1:3), n.trees=(2:10)*200, shrinkage=.1)
+   gbmGrid <- expand.grid(interaction.depth=(3:6), n.trees=(1:40)*100, shrinkage=.01)
    gbmGrid$n.minobsinnode = rep(10,nrow(gbmGrid))
-   myControl = trainControl(method='cv',classProbs = TRUE,number=3,summaryFunction =       twoClassSummary)
+   bootControl = trainControl(method='cv',classProbs = TRUE,number=3,summaryFunction =       twoClassSummary)
    gmbFit<- caret::train(def_flag~., data = un_train_set, 
                method = "gbm", 
                verbose = F, 
@@ -204,6 +213,17 @@ tt = temp[1:10,2]
 barplot(tt,names.arg = rownames(temp)[1:10],cex.names=0.8,main="Top 10 Variable Importance")
 ```
 
+```{r}
+model = bestBRT[[1]]$finalModel
+par(mfrow=c(2,2))
+plot(model,i.var = 1)
+plot(model,i.var = 2)
+plot(model,i.var = 3)
+plot(model,i.var = 4)
+par(mfrow=c(1,1))
+```
+
+
 ensamble the BRT model's prediction
 ```{r}
 predict = matrix(0, nrow = nrow(new_test),ncol = 10)
@@ -214,7 +234,7 @@ for (i in 1:10){
 
 predict_result = rowMeans(predict)
 
-temp = auc_calucator(predict[,2],new_test$def_flag)
+temp = auc_calucator(predict_result,new_test$def_flag)
 auc = temp[[1]];auc
 ```
 

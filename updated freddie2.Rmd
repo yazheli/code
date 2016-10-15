@@ -339,7 +339,7 @@ temp_function = function(i){
     fitted.results = predict(cvfit, newx = as.matrix(test[,-8]), s = "lambda.min", 
                          type = "response")
     pr <- prediction(fitted.results, test$def_flag)
-    auc <- performance(pr, measure = "auc")
+    auc <- ROCR::performance(pr, measure = "auc")
     auc <- auc@y.values[[1]]
     return(c(auc,i))
 }

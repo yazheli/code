@@ -162,7 +162,7 @@ un_frac_sample = function (frac){
 un_auc_frac = function(frac){
    un_train_set = un_frac_sample(frac)
    p = ncol(un_train_set)-1
-   tune_grid = expand.grid(ntree=c(1:20)*20, mtry=c(p,p/2,sqrt(p)))
+   tune_grid = expand.grid(ntree=c(2:10)*50, mtry=c(p,p/2,sqrt(p)))
    myControl = trainControl(method='cv',classProbs = TRUE,number=3,summaryFunction =     twoClassSummary)
    tune_rf = caret::train(def_flag~., data = un_train_set, method=customRF,  
    metric="ROC", trControl=myControl, tuneGrid=tune_grid,allowParallel=T)
@@ -202,7 +202,7 @@ ggplot(tg, aes(x=per, y=auc,group=1)) +
 un_auc_frac = function(frac){
    un_train_set = un_frac_sample(frac)
    p = ncol(un_train_set)-1
-   tune_grid = expand.grid(ntree=c(1:20)*20, mtry=c(p,p/2,sqrt(p)))
+   tune_grid = expand.grid(ntree=c(2:10)*50, mtry=c(p,p/2,sqrt(p)))
    myControl = trainControl(method='cv',classProbs = TRUE,number=3,summaryFunction =     twoClassSummary)
    tune_rf = caret::train(def_flag~., data = un_train_set, method=customRF,  
    metric="ROC", trControl=myControl, tuneGrid=tune_grid,allowParallel=T)
@@ -238,7 +238,7 @@ for (i in 1:10){
 
 predict_result = rowMeans(predict)
 
-temp = auc_calucator(predict[,2],new_test$def_flag)
+temp = auc_calucator(predict_result,new_test$def_flag)
 auc = temp[[1]];auc
 ```
 
@@ -304,6 +304,6 @@ tt = unlist(ROCR::performance(pred.mat, "auc")@y.values);tt
 
 ```{r fig.height=5, fig.width=7}
 plot(perf.mat, type = c("b"),pch=1,col = 1:7) #plot
- legend("topleft", legend = paste0(paste(seq(20,50,5),seq="AUC"), round(tt, digits = 3)), col=1:7, pch=1) # optional legend
+ legend("bottomright", legend = paste0(paste(seq(20,50,5),seq="AUC"), round(tt, digits = 3)), col=1:7, pch=1) # optional legend
 ```
 
