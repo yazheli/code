@@ -166,6 +166,16 @@ CLTV and LTV are highly correleated
 library(GGally)
 ggpairs(numerical[1:2000,1:6],lower = list(continuous = wrap("points", alpha = 0.3,    size=0.1)),title = "Scatterplot Matrix",axisLabels = "none")
 ```
+```{r}
+default_group = numerical[which(numerical$def_flag==TRUE),]
+no_default_group = numerical[which(numerical$def_flag==FALSE),]
+default_group = default_group[,-c(7,9)]
+no_default_group = no_default_group[,-c(7,9)]
+
+ggpairs(no_default_group[1:2000,],lower = list(continuous = wrap("points", alpha = 0.3,    size=0.1)),title = "Nodefault Scatterplot Matrix",axisLabels = "none")
+
+ggpairs(default_group[1:2000,],lower = list(continuous = wrap("points", alpha = 0.3,    size=0.1)),title = "Default Scatterplot Matrix",axisLabels = "none")
+```
 
 Below is box plots of score, CLTV, DTI, UPB and OIR by whether default 
 or not
