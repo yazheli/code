@@ -1,0 +1,100 @@
+---
+title: "balanced random forest in package"
+author: "Yazhe"
+date: "20/10/2016"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+load("~/Desktop/Freddie_Mac_data/save_model/prepared_data.RData")
+library(rpart)
+library(randomForest)
+library(parallel)
+library(ROCR)
+library(caret)
+library(rpart.plot)
+library(rpart)
+library(gbm)
+library(ROCR)
+library(mlr)
+library(unbalanced)
+library(randomForest)
+library(doParallel) 
+library(ggplot2)
+library(Rmisc) 
+```
+
+```{r}
+train$def_flag = as.factor(as.logical(train$def_flag))
+test$def_flag = as.factor(as.logical(test$def_flag))
+new_test = test[sample(1:nrow(test), size = nrow(test)/10),]
+new_train = train[sample(1:nrow(train), size = nrow(train)/10),]
+```
+
+```{r}
+auc_calucator = function(fitted.results, test_data_y) {
+  pr <- prediction(fitted.results, test_data_y)
+  prf <- ROCR::performance(pr, measure = "tpr", x.measure = "fpr")
+  auc <- ROCR::performance(pr, measure = "auc")
+  auc <- auc@y.values[[1]]
+  return(c(auc,prf))
+}
+```
+
+```{r}
+minorityclass = new_train[which(new_train$def_flag==TRUE),]
+p = ncol(train) - 1
+
+rf = randomForest(def_flag~., data=new_train, 
+                           sampsize=c(nrow(minorityclass), nrow(minorityclass)), 
+                           strata=new_train$def_flag, 
+                           ntree = 100, mtry = sqrt(p))
+summary(rf)
+
+prob_train = predict(rf, type = "prob")[,2]
+auc_calucator(prob_train, new_train$def_flag)[[1]]
+```
+
+```{r}
+customRF <- list(type = "Classification", library = "randomForest", loop = NULL)
+customRF$parameters <- data.frame(parameter = c("mtry", "ntree"), class = rep("numeric", 2), label = c("mtry", "ntree"))
+customRF$grid <- function(x, y, len = NULL, search = "grid") {}
+customRF$fit <- function(x, y, wts, param, lev, last, weights, classProbs, ...) {
+    randomForest(x, y, mtry = param$mtry, ntree=param$ntree, ...)
+}
+customRF$predict <- function(modelFit, newdata, preProc = NULL, submodels = NULL)
+    predict(modelFit, newdata)
+customRF$prob <- function(modelFit, newdata, preProc = NULL, submodels = NULL)
+    predict(modelFit, newdata, type = "prob")
+customRF$sort <- function(x) x[order(x[,1]),]
+customRF$levels <- function(x) x$classes
+customRF
+```
+
+```{r}
+X = new_train[,-8]
+Y = new_train[,8]
+Y = as.numeric(Y)
+Y[which(Y==1)] = 'no'
+Y[which(Y==2)] = 'yes'
+data_set = cbind(X,Y)
+```
+
+Create the tune grid
+```{r}
+p = ncol(X)#number of predictors
+tune_grid = expand.grid(ntree=c(8:20)*50, mtry=c(p/2,sqrt(p)))
+head(tune_grid)
+
+myControl <- trainControl(method='cv',classProbs = TRUE,number=3,summaryFunction = twoClassSummary)
+```
+
+```{r}
+tune_rf = caret::train(Y~.,data = data_set, method=customRF,  
+metric="ROC", trControl=myControl, tuneGrid=tune_grid, allowParallel=T,sampsize=c(nrow(minorityclass), nrow(minorityclass)),strata=data_set$Y)
+plot(tune_rf)
+```

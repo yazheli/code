@@ -1,0 +1,123 @@
+---
+title: "balanced RF"
+author: "Yazhe"
+date: "19/10/2016"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+load("~/Desktop/Freddie_Mac_data/save_model/prepared_data.RData")
+library(rpart)
+library(randomForest)
+library(parallel)
+library(ROCR)
+library(caret)
+library(rpart.plot)
+library(rpart)
+library(gbm)
+library(ROCR)
+library(mlr)
+library(unbalanced)
+library(randomForest)
+library(doParallel) 
+library(ggplot2)
+library(Rmisc) 
+```
+
+```{r}
+train$def_flag = as.factor(as.logical(train$def_flag))
+test$def_flag = as.factor(as.logical(test$def_flag))
+new_test = test[sample(1:nrow(test), size = nrow(test)/10),]
+new_train = train[sample(1:nrow(train), size = nrow(train)/10),]
+```
+
+```{r}
+boost_sample = function(data){
+  boost_sample_index = sample(1:nrow(data), size = nrow(data), replace = TRUE)
+  boost_sample = data[boost_sample_index,]
+  return(boost_sample)
+}
+```
+
+```{r}
+single_tree = function(data,mtry){
+  minorityclass = data[data$def_flag == TRUE,]
+  majorityclass = data[data$def_flag == FALSE,]
+  boost_minority = boost_sample(minorityclass)
+  boost_majority = boost_sample(majorityclass)
+  dataset = rbind(boost_minority,boost_majority)
+  single_tree = randomForest(def_flag~., data=dataset, 
+                           sampsize=c(nrow(minorityclass), nrow(minorityclass)), 
+                           strata=dataset$def_flag ,replace = TRUE, 
+                           ntree = 1, mtry = mtry)
+  return (single_tree)
+}
+```
+
+```{r}
+p = ncol(data) - 1
+single_rf_tree = single_tree(new_train,sqrt(p))
+tr = getTree(single_rf_tree, 1, labelVar=TRUE);tr
+```
+
+```{r}
+myRF = function (data, ntree, mtry){
+  no_cores <- detectCores() - 1
+  cl <- makeCluster(no_cores, type="FORK") 
+  clusterEvalQ(cl,library(randomForest))
+  l= parSapply(cl, 1:ntree, function(i,...) {single_tree(data,mtry)},simplify = FALSE)
+  stopCluster(cl)
+  
+  return(l)
+}
+```
+
+```{r}
+temp = myRF(data = new_train, ntree = 300, mtry = sqrt(p))
+```
+
+```{r}
+my_predict = function(model, newdata){
+  sapply(seq(1:length(temp)), function(i) {
+                             predict(model[[i]],newdata = newdata, type="response")},
+         simplify = TRUE)
+         
+}
+```
+
+```{r}
+my_prob_predict = function(model, newdata){
+  predict_train = my_predict(model, newdata)
+  pro_train = rep(0,nrow(predict_train))
+  for (i in 1:nrow(predict_train)){
+  pro_train[i] = sum(predict_train[i,] == TRUE)/length(predict_train[i,] == TRUE)
+  }
+  
+  return(pro_train)
+}
+```
+
+```{r}
+pro_train = my_prob_predict(model = temp, newdata = new_train)
+pro_test = my_prob_predict(model = temp, newdata = new_test)
+```
+
+```{r}
+auc_calucator = function(fitted.results, test_data_y) {
+  pr <- prediction(fitted.results, test_data_y)
+  prf <- ROCR::performance(pr, measure = "tpr", x.measure = "fpr")
+  auc <- ROCR::performance(pr, measure = "auc")
+  auc <- auc@y.values[[1]]
+  return(c(auc,prf))
+}
+```
+
+```{r}
+auc_calucator(pro_train, new_train$def_flag)[[1]]
+auc_calucator(pro_test, new_test$def_flag)[[1]]
+```
+

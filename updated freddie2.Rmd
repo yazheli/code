@@ -555,7 +555,7 @@ stateFromLower <-function(x) {
 ```
 
 ```{r, warning=FALSE}
-temp = as.data.frame(cbind(unlist(auc_matrix["CA",]),rownames(auc_matrix)))
+temp = as.data.frame(cbind(unlist(auc_matrix["GA",]),rownames(auc_matrix)))
 colnames(temp)=c("value","region")
 temp$region = stateFromLower(temp$region)
 temp$value = as.numeric(as.character(temp$value))
@@ -563,7 +563,7 @@ temp$value = as.numeric(as.character(temp$value))
 temp = temp[complete.cases(temp),]
 
 
-state_choropleth(temp, title = "AUC on Different States based on Model from California",num_colors = 9,legend = "AUC")
+state_choropleth(temp, title = "AUC on Different States based on Model from Georgia",num_colors = 9,legend = "AUC")
 ```
 
 ```{r, warning=FALSE}
