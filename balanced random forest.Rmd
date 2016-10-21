@@ -25,9 +25,21 @@ library(unbalanced)
 library(randomForest)
 library(doParallel) 
 library(ggplot2)
-library(Rmisc) 
+library(Rmisc)
+library(smotefamily)
 ```
 
+```{r}
+auc_calucator = function(fitted.results, test_data_y) {
+  pr <- prediction(fitted.results, test_data_y)
+  prf <- ROCR::performance(pr, measure = "tpr", x.measure = "fpr")
+  auc <- ROCR::performance(pr, measure = "auc")
+  auc <- auc@y.values[[1]]
+  return(c(auc,prf))
+}
+```
+
+##balanced random rorest
 ```{r}
 train$def_flag = as.factor(as.logical(train$def_flag))
 test$def_flag = as.factor(as.logical(test$def_flag))
@@ -44,32 +56,34 @@ boost_sample = function(data){
 ```
 
 ```{r}
-single_tree = function(data,mtry){
-  minorityclass = data[data$def_flag == TRUE,]
-  majorityclass = data[data$def_flag == FALSE,]
+single_balanced_rf_tree = function(data,mtry){
+  data$def_flag = as.factor(as.logical(data$def_flag))
+  minorityclass = data[data$def_flag == TRUE | data$def_flag == 1,]
+  majorityclass = data[data$def_flag == FALSE | data$def_flag == 0,]
   boost_minority = boost_sample(minorityclass)
   boost_majority = boost_sample(majorityclass)
   dataset = rbind(boost_minority,boost_majority)
   single_tree = randomForest(def_flag~., data=dataset, 
                            sampsize=c(nrow(minorityclass), nrow(minorityclass)), 
-                           strata=dataset$def_flag ,replace = TRUE, 
+                           strata=dataset$def_flag ,replace = FALSE, 
                            ntree = 1, mtry = mtry)
   return (single_tree)
 }
 ```
 
+
 ```{r}
 p = ncol(data) - 1
-single_rf_tree = single_tree(new_train,sqrt(p))
-tr = getTree(single_rf_tree, 1, labelVar=TRUE);tr
+single_tree = single_balanced_rf_tree(new_train,sqrt(p))
+tr = getTree(single_tree, 1, labelVar=TRUE);tr
 ```
 
 ```{r}
-myRF = function (data, ntree, mtry){
+my_balanced_RF = function (data, ntree, mtry){
   no_cores <- detectCores() - 1
   cl <- makeCluster(no_cores, type="FORK") 
   clusterEvalQ(cl,library(randomForest))
-  l= parSapply(cl, 1:ntree, function(i,...) {single_tree(data,mtry)},simplify = FALSE)
+  l= parSapply(cl, 1:ntree, function(i,...) {single_balanced_rf_tree(data,mtry)},simplify = FALSE)
   stopCluster(cl)
   
   return(l)
@@ -77,12 +91,12 @@ myRF = function (data, ntree, mtry){
 ```
 
 ```{r}
-temp = myRF(data = new_train, ntree = 300, mtry = sqrt(p))
+temp = my_balanced_RF(data = new_train, ntree = 2, mtry = sqrt(p))
 ```
 
 ```{r}
 my_predict = function(model, newdata){
-  sapply(seq(1:length(temp)), function(i) {
+  sapply(seq(1:length(model)), function(i) {
                              predict(model[[i]],newdata = newdata, type="response")},
          simplify = TRUE)
          
@@ -107,17 +121,53 @@ pro_test = my_prob_predict(model = temp, newdata = new_test)
 ```
 
 ```{r}
-auc_calucator = function(fitted.results, test_data_y) {
-  pr <- prediction(fitted.results, test_data_y)
-  prf <- ROCR::performance(pr, measure = "tpr", x.measure = "fpr")
-  auc <- ROCR::performance(pr, measure = "auc")
-  auc <- auc@y.values[[1]]
-  return(c(auc,prf))
-}
-```
-
-```{r}
 auc_calucator(pro_train, new_train$def_flag)[[1]]
 auc_calucator(pro_test, new_test$def_flag)[[1]]
 ```
 
+#tune ntree from 100 to 500
+```{r}
+auc=rep(0,5)
+for(i in 1:5){
+  temp = my_balanced_RF(data = new_train, ntree = i*100, mtry = sqrt(p))
+  pro_test = my_prob_predict(model = temp, newdata = new_test)
+  auc[i] = auc_calucator(pro_test, new_test$def_flag)[[1]]
+  rm(temp)
+}
+cbind(ntree = c(1:5)*100, auc = auc)
+```
+
+
+##delete over lapping
+```{r}
+Y = new_train[,8]
+Y = as.numeric(Y)
+X = new_train[,-8]
+Y[which(Y==1)] = 0
+Y[which(Y==2)] = 1
+a = ubTomek(X, Y, verbose = TRUE)
+un_train_set = cbind(a[[1]],def_flag = a[[2]])
+
+
+tt = BLSMOTE(un_train_set[,-30],un_train_set[,30],K=5,C=5,dupSize=0,method =c("type2"))$data
+names(tt)[30] = "def_flag"
+new_train = un_train_set
+```
+
+```{r}
+tt$def_flag = as.character(tt$def_flag)
+tt$def_flag[which(tt$def_flag == "0")] = FALSE
+tt$def_flag[which(tt$def_flag == "1")] = TRUE
+temp = my_balanced_RF(data = new_train, ntree = 100, mtry = sqrt(p))
+```
+
+```{r}
+auc=rep(0,5)
+for(i in 1:5){
+  temp = my_balanced_RF(data = new_train, ntree = i*100, mtry = sqrt(p))
+  pro_test = my_prob_predict(model = temp, newdata = new_test)
+  auc[i] = auc_calucator(pro_test, new_test$def_flag)[[1]]
+  rm(temp)
+}
+cbind(ntree = c(1:5)*100, auc = auc)
+```
