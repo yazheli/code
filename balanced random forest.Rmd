@@ -9,7 +9,7 @@ output: pdf_document
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
-```{r}
+```{r, include=FALSE}
 load("~/Desktop/Freddie_Mac_data/save_model/prepared_data.RData")
 library(rpart)
 library(randomForest)
@@ -90,7 +90,7 @@ my_balanced_RF = function (data, ntree, mtry){
 }
 ```
 
-```{r}
+```{}
 temp = my_balanced_RF(data = new_train, ntree = 2, mtry = sqrt(p))
 ```
 
@@ -115,12 +115,12 @@ my_prob_predict = function(model, newdata){
 }
 ```
 
-```{r}
+```{}
 pro_train = my_prob_predict(model = temp, newdata = new_train)
 pro_test = my_prob_predict(model = temp, newdata = new_test)
 ```
 
-```{r}
+```{}
 auc_calucator(pro_train, new_train$def_flag)[[1]]
 auc_calucator(pro_test, new_test$def_flag)[[1]]
 ```

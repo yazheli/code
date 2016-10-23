@@ -1,10 +1,10 @@
 ---
 title: "parameter distance"
 author: "Yazhe"
-date: "18/10/2016"
+date: "22/10/2016"
 output: pdf_document
 ---
-```{r}
+```{r, include=FALSE}
 load("~/Desktop/Freddie_Mac_data/save_model/logistic state 10.10.RData")
 library(ROCR)
 library(Deducer)
@@ -17,6 +17,7 @@ library(easyGgplot2)
 library(glmnet)
 library(maps)
 library(choroplethr)
+library(ggfortify)
 ```
 
 ```{r}
@@ -65,8 +66,12 @@ fit <- cmdscale(aa, eig=TRUE, k=2)
 x <- fit$points[,1]
 y <- fit$points[,2]
 
-library(ggfortify)
-autoplot(cmdscale(aa,eig=TRUE, k=2), shape = FALSE,label = TRUE,label.colour = 'blue', label.size = 2)
+autoplot(cmdscale(aa,eig=TRUE, k=2), shape = FALSE,label = TRUE,label.colour = 'blue', label.size = 2) + annotate("rect", xmin = 1000, xmax = 1200, ymin = 70, ymax = 130,
+  alpha = .4)
+```
+
+```{r}
+t = which(fit$points[,1]<1200 & fit$points[,1]>1000 & fit$points[,2]>70 & fit$points[,2]<130);names(t)
 ```
 
 ```{r, warning=FALSE,fig.height=7, fig.width=7}
@@ -88,4 +93,50 @@ oo = oo[complete.cases(oo),]
 
 
 state_choropleth(oo,num_colors = 5,legend = "group",title = "state cluster based on parameter distance")
+```
+
+
+```{r}
+load("~/Desktop/Freddie_Mac_data/USMortgages2008_2009.rdata")
+D_state = D1[,-c(1,3,6,5,17,20,26)]
+D_state = D_state[complete.cases(D_state),]
+state = D_state$property.state
+```
+
+```{r}
+numerical = subset(D_state, select=c("score", "CLTV", "DTI", "UPB", "LTV",
+                                        "OIR"))
+```
+
+```{r}
+pca <- prcomp(numerical, center = TRUE, scale. = TRUE) 
+plot(pca, type = "l")
+```
+
+```{r, warning=FALSE}
+temp = pca$x
+temp = cbind(temp[,(1:2)],state)
+temp = as.data.frame(temp)
+names(temp)
+temp$PC1 = as.numeric(as.character(temp$PC1))
+temp$PC2 = as.numeric(as.character(temp$PC2))
+
+aggdata <-aggregate(temp, by=list(state), FUN=mean)
+```
+
+```{}
+ggplot(aggdata, aes(x= PC1, y= PC2, colour="Group.1", label=Group.1))+
+  geom_point() +geom_text(aes(label=Group.1),hjust=0, vjust=0)
+```
+
+```{r}
+for (i in 1:5) {
+  gr[[i]]$group = i
+}
+group = rbind(gr[[1]],gr[[2]],gr[[3]],gr[[4]],gr[[5]])
+
+tt = merge(x = group, y = aggdata, by.x = "region", by.y = "Group.1")
+tt$group = as.factor(tt$group)
+ggplot(tt, aes(x= PC1, y= PC2, colour=group, label=group))+
+  geom_point() +geom_text(aes(label=region),hjust=0, vjust=0)
 ```
