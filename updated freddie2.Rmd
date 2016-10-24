@@ -596,3 +596,5 @@ temp <- temp[c(state.order),]
 write.csv(temp, "tempt.csv")
 heatmap <- heatmap.2(temp, Rowv=F, Colv=F, col = heat.colors(256), scale="column", margins=c(5,10))
 ```
+
+
