@@ -456,9 +456,8 @@ auc_calucator = function(model, test_data_x, test_data_y) {
 }
 
 auc_ca = auc_calucator(cvfit, x, y);auc_ca
-auc_tx = auc_calucator(cvfit, as.matrix(tx[,-8]), tx[,8]);auc_tx
-auc_nonca = auc_calucator(cvfit, as.matrix(except_ca[,-8]), except_ca[,8]);auc_nonca
 ```
+
 The auc value on California data itself is `r auc_ca`,
 on Taxes data is `r auc_tx`,
 on all non-California data is `r auc_nonca`.

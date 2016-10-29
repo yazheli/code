@@ -89,12 +89,12 @@ Y[which(Y==2)] = 'yes'
 
 ```{r, warning=FALSE}
 gmbFit<- caret::train(X,Y, 
-               method = "gbm", 
+               method = "gbm",
                verbose = F, 
                trControl = bootControl, 
                bag.fraction=0.5,
                metric="ROC",
-               tuneGrid=gbmGrid)
+               tuneGrid=gbmGrid[c(1,2),])
 ```
 
 ```{r}
